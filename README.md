@@ -30,7 +30,7 @@ OPENAI_MODEL=gpt-5-nano
 OPENAI_VISION_MODEL=gpt-5-nano
 ```
 
-## Setup
+## Setup local
 
 ```bash
 cd ~/Documents/yt-analizer-videos
@@ -45,12 +45,20 @@ npm run dev
 php artisan serve
 ```
 
-Abre `http://localhost:8000`
+Abre `http://localhost:8000` (o tu dominio Valet `.test`).
 
 **Login demo**
 
 - Email: `hollowgrim@local.test`
 - Password: `password`
+
+Local usa **SQLite**. Producción usa **Postgres (Neon)**.
+
+## Deploy en la nube (gratis)
+
+Ver guía paso a paso: [`DEPLOY.md`](./DEPLOY.md)
+
+Resumen: **Neon** (Postgres) + **Render** (Docker Web Service free).
 
 ## Estructura útil
 

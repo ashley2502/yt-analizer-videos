@@ -1,0 +1,50 @@
+# Exported from https://dashboard.render.com/blueprints
+# Optional: connect this repo as a Blueprint, or create the Web Service manually.
+
+services:
+  - type: web
+    name: yt-analizer-videos
+    runtime: docker
+    plan: free
+    healthCheckPath: /up
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_NAME
+        value: YT Analyzer
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_SSLMODE
+        value: require
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: FILESYSTEM_DISK
+        value: local
+      # Set these in the Render dashboard (do not commit secrets):
+      # APP_KEY, APP_URL, DB_URL (Neon), OPENAI_API_KEY (optional)
+      - key: APP_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: DB_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5-nano
+      - key: OPENAI_VISION_MODEL
+        value: gpt-5-nano
+      - key: YT_CHANNEL_NAME
+        value: HollowGrim Beats
+      - key: YT_CHANNEL_HANDLE
+        value: "@HollowGrimBeats"
+      - key: YT_CONTACT_EMAIL
+        value: asaucedagamez@gmail.com
