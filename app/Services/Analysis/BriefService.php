@@ -14,25 +14,56 @@ class BriefService
      */
     public function generate(array $input): array
     {
+        $briefInput = [
+            'artists' => trim((string) ($input['artists'] ?? '')),
+            'mood' => trim((string) ($input['mood'] ?? '')),
+            'notes' => trim((string) ($input['notes'] ?? '')),
+        ];
+
         if ($this->ai->enabled()) {
             $result = $this->ai->chatJson([
                 [
                     'role' => 'system',
-                    'content' => 'You are a boom-bap / Griselda-style beat coach. JSON only. Do not encourage copying melodies note-for-note. Suggest sample-hunting queries and filters, not illegal download sites.',
+                    'content' => 'You are a boom-bap / underground Type Beat coach. JSON only. Vary BPM, key, titles, structure, sample hunt and Samplette filters based on the user input — never reuse a fixed Italy/Jazz recipe. Do not encourage copying melodies note-for-note. Suggest sample-hunting queries and filters, not illegal download sites.',
                 ],
                 [
                     'role' => 'user',
-                    'content' => 'Crea un brief de producción para Type Beat. Input: '.json_encode($input, JSON_UNESCAPED_UNICODE).
-                        ' Nicho: '.config('ai.channel.niche').
-                        ' JSON: {"bpm":85,"musical_key":"A minor","structure":"...","hook_idea":"...","references":["mood refs"],"title_ideas":["..."],"session_plan":["25min tasks"],"sample_hunt":{"keywords":["5-8 YouTube search queries for melodic samples"],"drum_break_keywords":["4-6 YouTube queries for drum breaks"],"samplette_filters":{"Genre":"Jazz","Style":"Soul-Jazz","Region":"Italy","Year":"1965-1979","Tempo":"70-90","Key":"A minor"},"samplette_drums_filters":{"Genre":"Funk","Style":"Soul","Region":"USA","Year":"1968-1976","Tempo":"70-90","Key":""},"youtube_channels":[{"name":"channel","why":"why"}]}}'.
-                        ' Importante: samplette_filters y samplette_drums_filters deben ser valores CORTOS listos para pegar en cada campo de Samplette (un valor por campo, no listas largas).',
+                    'content' => <<<PROMPT
+Crea un brief de producción Type Beat ÚNICO para este input (cámbialo si cambian artists/mood/notes):
+{$this->json($briefInput)}
+
+Nicho del canal: {$this->channelNiche()}
+
+JSON schema (rellena con valores concretos derivados del input, NO copies ejemplos literales):
+{
+  "bpm": 72-96 integer matching mood,
+  "musical_key": "e.g. D minor / F# minor / Bb minor",
+  "structure": "bars: intro/hook/verse tailored to the vibe",
+  "hook_idea": "1-2 sentences specific to artists + mood + notes",
+  "references": ["3 production refs inspired by artists/mood, no melody theft"],
+  "title_ideas": ["4 short beat name ideas reflecting THIS mood/notes"],
+  "session_plan": ["4 timed tasks specific to this brief"],
+  "sample_hunt": {
+    "keywords": ["5-8 YouTube queries using mood/notes instruments/era/region"],
+    "drum_break_keywords": ["4-6 YouTube drum-break queries matching BPM feel"],
+    "samplette_filters": {"Genre":"one short value","Style":"one short value","Region":"country/region that fits","Year":"range","Tempo":"low-high","Key":"musical key"},
+    "samplette_drums_filters": {"Genre":"...","Style":"...","Region":"...","Year":"...","Tempo":"...","Key":""},
+    "youtube_channels": [{"name":"channel or dig type","why":"why useful for THIS mood"}]
+  }
+}
+
+Reglas:
+- Si notes menciona piano/guitar/soundtrack/italiano/japonés/etc., refleja eso en keywords y Samplette Region/Genre/Style.
+- samplette_*_filters: valores CORTOS listos para pegar en Samplette (un valor por campo).
+- title_ideas y hook_idea deben sonar distintos si el mood o las notes cambian.
+PROMPT,
                 ],
             ]);
 
-            return ['engine' => 'openai', ...$this->normalize($result, $input)];
+            return ['engine' => 'openai', ...$this->normalize($result, $briefInput)];
         }
 
-        return ['engine' => 'template', ...$this->withTemplate($input)];
+        return ['engine' => 'template', ...$this->withTemplate($briefInput)];
     }
 
     /**
@@ -41,36 +72,71 @@ class BriefService
      */
     private function withTemplate(array $input): array
     {
-        $artists = $input['artists'] ?: 'Griselda / Mobb Deep';
-        $mood = $input['mood'] ?: 'dark, dusty, grimy';
-        $bpms = [72, 78, 84, 88, 92];
-        $keys = ['A minor', 'D minor', 'F minor', 'C minor', 'G minor'];
-        $bpm = $bpms[array_rand($bpms)];
-        $key = $keys[array_rand($keys)];
+        $artists = $input['artists'] !== '' ? $input['artists'] : 'Griselda / Mobb Deep';
+        $mood = $input['mood'] !== '' ? $input['mood'] : 'dark, dusty, grimy';
+        $notes = $input['notes'] ?? '';
+        $seed = $this->seed($artists, $mood, $notes);
+        $profile = $this->sampleProfile($mood, $notes, $seed);
+
+        $bpms = [72, 76, 80, 84, 88, 92];
+        $keys = ['A minor', 'D minor', 'F minor', 'C minor', 'G minor', 'Bb minor', 'E minor'];
+        $bpm = $bpms[$seed % count($bpms)];
+        $key = $keys[($seed >> 3) % count($keys)];
+        $tempoLow = max(50, $bpm - 15);
+        $tempoHigh = $bpm + 10;
+
+        $structures = [
+            '8 intro · 16 hook · 16 verse · 8 hook · 16 verse · 8 outro',
+            '4 cold open · 8 hook · 16 verse · 8 hook · 16 verse · 8 bridge · 8 hook',
+            '16 loop bed · 8 hook drop · 16 verse · 8 switch-up · 16 verse · 8 fade',
+            '8 dust intro · 12 hook · 20 verse · 8 hook · 16 verse · 4 tag',
+        ];
+
+        $titlePools = [
+            'dark' => ['Smoke Room', 'Black Marble', 'Cold Chain', 'Night Docket'],
+            'dusty' => ['Dust Frame', 'Yellow Label', 'Crate Ash', 'Needle Run'],
+            'grimy' => ['Grime Pocket', 'Basement Iron', 'Wet Concrete', 'Low Ceiling'],
+            'melodic' => ['Soft Knife', 'Minor Halo', 'Glass Choir', 'Pale Ribbon'],
+            'default' => ['Hollow Court', 'Grey Stamp', 'Quiet Warrant', 'Iron Hymn'],
+        ];
+        $titleKey = match (true) {
+            str_contains(strtolower($mood), 'melodic') || str_contains(strtolower($notes), 'piano') => 'melodic',
+            str_contains(strtolower($mood), 'grimy') || str_contains(strtolower($mood), 'grime') => 'grimy',
+            str_contains(strtolower($mood), 'dust') => 'dusty',
+            str_contains(strtolower($mood), 'dark') || str_contains(strtolower($mood), 'noir') => 'dark',
+            default => 'default',
+        };
+        $titles = $titlePools[$titleKey];
+        // Rotate so same pool still shifts with seed / notes
+        $offset = $seed % count($titles);
+        $titleIdeas = array_values([
+            ...array_slice($titles, $offset),
+            ...array_slice($titles, 0, $offset),
+        ]);
+        if ($notes !== '') {
+            $titleIdeas[0] = $this->titleFromNotes($notes, $titleIdeas[0]);
+        }
+
+        $instrumentHint = $this->instrumentHint($notes, $mood);
 
         return [
             'bpm' => $bpm,
             'musical_key' => $key,
-            'structure' => '8 intro · 16 hook · 16 verse · 8 hook · 16 verse · 8 outro',
-            'hook_idea' => "Sample vibe {$mood}: chops cortos, vinyl crackle, 808 con glide suave, hats sucios.",
+            'structure' => $structures[$seed % count($structures)],
+            'hook_idea' => "Vibe {$mood}".($notes !== '' ? " ({$notes})" : '').": {$instrumentHint}, vinyl texture, 808 con glide suave, hats sucios tipo {$this->primaryArtist($artists)}.",
             'references' => [
                 "Mood de {$artists} (no copies melodías)",
-                'Drums tipo Alchemist: dry, punchy, room corto',
-                'Melodía menor, intervalos cercanos, atmosphere pad bajo',
+                "Drums dry/punchy; melodía en {$key} con atmosphere baja",
+                $profile['ref'],
             ],
-            'title_ideas' => [
-                'Smoke',
-                'Marble',
-                'Night Court',
-                'Cold Room',
-            ],
+            'title_ideas' => $titleIdeas,
             'session_plan' => [
-                '10 min: buscar 1 sample/loop en mood oscuro',
-                '25 min: drums + 808 pocket',
-                '25 min: arrangement mínimo escuchable',
-                '10 min: export sketch y nombrar el beat',
+                "10 min: buscar sample {$profile['hunt_focus']}",
+                '25 min: drums + 808 pocket al BPM del brief',
+                "25 min: arrangement mínimo + hook ({$instrumentHint})",
+                '10 min: export sketch y elegir un title idea',
             ],
-            'sample_hunt' => $this->buildSampleHunt($input, $bpm, $key),
+            'sample_hunt' => $this->buildSampleHunt($input, $bpm, $key, $profile, $tempoLow, $tempoHigh),
         ];
     }
 
@@ -105,41 +171,43 @@ class BriefService
 
     /**
      * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $profile
      * @return array<string, mixed>
      */
-    private function buildSampleHunt(array $input, int $bpm, string $key): array
-    {
+    private function buildSampleHunt(
+        array $input,
+        int $bpm,
+        string $key,
+        array $profile,
+        int $tempoLow,
+        int $tempoHigh,
+    ): array {
         $artists = trim((string) ($input['artists'] ?? 'Griselda'));
         $mood = trim((string) ($input['mood'] ?? 'dark dusty grimy'));
         $notes = trim((string) ($input['notes'] ?? ''));
         $primary = $this->primaryArtist($artists);
-        $tempoLow = max(50, $bpm - 15);
-        $tempoHigh = $bpm + 10;
 
         $keywords = array_values(array_unique(array_filter([
-            "1970s italian soundtrack piano {$mood}",
-            'dusty soul vinyl loop minor key',
-            'obscure jazz guitar 1968 vinyl',
+            $profile['yt_melody'],
+            "{$mood} {$profile['instrument']} vinyl sample",
+            "{$profile['era']} {$profile['region_label']} {$profile['instrument']} loop",
+            "dusty {$profile['genre_label']} minor key sample",
             "dark {$primary} vibe instrumental sample",
-            'grimy boom bap sample pack free',
-            'japanese city pop vinyl crackle',
-            'library music thriller 1970s',
             $notes !== '' ? "{$notes} vinyl sample" : null,
-            "{$mood} piano sample royalty free",
+            'obscure library music thriller vinyl',
+            "{$mood} boom bap sample royalty free",
         ])));
 
         $drumBreakKeywords = array_values(array_unique(array_filter([
             "drum break {$bpm} bpm vinyl",
-            'funky drummer style break boom bap',
+            "{$profile['drums_style']} drum break boom bap",
             'obscure 1960s drum break dusty',
             'soul drum break dry roomy',
             "{$bpm} bpm drum break sample pack free",
             'classic hip hop drum breaks compilation',
-            'amen break alternative obscure',
-            'grimy boom bap drums one shot break',
             $notes !== '' && str_contains(strtolower($notes), 'drum')
                 ? "{$notes} drum break"
-                : null,
+                : 'grimy boom bap drums one shot break',
         ])));
 
         $channels = [
@@ -149,19 +217,14 @@ class BriefService
                 'url' => 'https://www.youtube.com/@Tracklib',
             ],
             [
-                'name' => 'Pell (crate digs / vinyl finds)',
-                'why' => 'Buenas piezas oscuras y digs tipo boom bap underground.',
-                'url' => 'https://www.youtube.com/@Pell',
+                'name' => $profile['channel_name'],
+                'why' => $profile['channel_why'],
+                'url' => $profile['channel_url'],
             ],
             [
                 'name' => 'Drum breaks / breakbeats compilations',
-                'why' => 'Búsquedas de breaks clásicos y oscuros para chops de kit.',
-                'url' => 'https://www.youtube.com/results?search_query=drum+breaks+compilation+vinyl+boom+bap',
-            ],
-            [
-                'name' => 'The BreakBeat Bible / break digs',
-                'why' => 'Referencias de breaks históricos usados en hip-hop.',
-                'url' => 'https://www.youtube.com/results?search_query=hip+hop+drum+breaks+origins',
+                'why' => 'Breaks clásicos y oscuros para chops de kit al BPM del brief.',
+                'url' => 'https://www.youtube.com/results?search_query='.rawurlencode("drum breaks {$bpm} bpm vinyl boom bap"),
             ],
             [
                 'name' => 'Royalty Free drum breaks',
@@ -169,9 +232,9 @@ class BriefService
                 'url' => 'https://www.youtube.com/results?search_query=royalty+free+drum+breaks+boom+bap',
             ],
             [
-                'name' => 'SuperDuperMusic (library / rare)',
-                'why' => 'Library music y rarezas útiles para chops melódicos.',
-                'url' => 'https://www.youtube.com/results?search_query=library+music+1970s+vinyl',
+                'name' => 'Library / rare digs',
+                'why' => "Busca {$profile['hunt_focus']} en vinyl uploads.",
+                'url' => 'https://www.youtube.com/results?search_query='.rawurlencode($profile['yt_melody']),
             ],
         ];
 
@@ -179,18 +242,18 @@ class BriefService
             'keywords' => $keywords,
             'drum_break_keywords' => $drumBreakKeywords,
             'samplette_filters' => [
-                'Genre' => 'Jazz',
-                'Style' => 'Soul-Jazz',
-                'Region' => 'Italy',
-                'Year' => '1965-1979',
+                'Genre' => $profile['genre'],
+                'Style' => $profile['style'],
+                'Region' => $profile['region'],
+                'Year' => $profile['year'],
                 'Tempo' => "{$tempoLow}-{$tempoHigh}",
                 'Key' => $key,
             ],
             'samplette_drums_filters' => [
-                'Genre' => 'Funk',
-                'Style' => 'Soul',
-                'Region' => 'USA',
-                'Year' => '1968-1976',
+                'Genre' => $profile['drums_genre'],
+                'Style' => $profile['drums_style'],
+                'Region' => $profile['drums_region'],
+                'Year' => $profile['drums_year'],
                 'Tempo' => "{$tempoLow}-{$tempoHigh}",
                 'Key' => '',
             ],
@@ -213,7 +276,20 @@ class BriefService
     ): array {
         $keywords = array_values($sampleHunt['keywords'] ?? $fallback['keywords'] ?? []);
         if ($keywords === []) {
-            return $this->buildSampleHunt($input, $bpm, $key);
+            $seed = $this->seed(
+                (string) ($input['artists'] ?? ''),
+                (string) ($input['mood'] ?? ''),
+                (string) ($input['notes'] ?? ''),
+            );
+            $profile = $this->sampleProfile(
+                (string) ($input['mood'] ?? ''),
+                (string) ($input['notes'] ?? ''),
+                $seed,
+            );
+            $tempoLow = max(50, $bpm - 15);
+            $tempoHigh = $bpm + 10;
+
+            return $this->buildSampleHunt($input, $bpm, $key, $profile, $tempoLow, $tempoHigh);
         }
 
         $drumBreakKeywords = array_values(
@@ -364,6 +440,183 @@ class BriefService
     }
 
     /**
+     * @return array<string, string>
+     */
+    private function sampleProfile(string $mood, string $notes, int $seed): array
+    {
+        $blob = strtolower($mood.' '.$notes);
+
+        $profiles = [
+            'italian' => [
+                'genre' => 'Soundtrack',
+                'style' => 'Film Score',
+                'region' => 'Italy',
+                'year' => '1968-1978',
+                'instrument' => 'piano',
+                'genre_label' => 'italian soundtrack',
+                'region_label' => 'italian',
+                'era' => '1970s',
+                'hunt_focus' => 'piano / soundtrack italiano',
+                'yt_melody' => '1970s italian soundtrack piano dusty',
+                'ref' => 'Chop de soundtrack italiano: notas cortas, reverb de sala',
+                'drums_genre' => 'Funk',
+                'drums_style' => 'Soul',
+                'drums_region' => 'USA',
+                'drums_year' => '1968-1976',
+                'channel_name' => 'Italian library / poliziotteschi digs',
+                'channel_why' => 'Piano y orquesta oscura tipo thriller 70s.',
+                'channel_url' => 'https://www.youtube.com/results?search_query=italian+soundtrack+1970s+vinyl',
+            ],
+            'jazz' => [
+                'genre' => 'Jazz',
+                'style' => 'Soul-Jazz',
+                'region' => 'USA',
+                'year' => '1965-1975',
+                'instrument' => 'jazz guitar',
+                'genre_label' => 'soul jazz',
+                'region_label' => 'american',
+                'era' => '1960s',
+                'hunt_focus' => 'guitarra / organ jazz sucio',
+                'yt_melody' => 'obscure soul jazz guitar 1968 vinyl',
+                'ref' => 'Soul-jazz: guitarra o organ, swing suave, room corto',
+                'drums_genre' => 'Jazz',
+                'drums_style' => 'Hard Bop',
+                'drums_region' => 'USA',
+                'drums_year' => '1960-1972',
+                'channel_name' => 'Pell (crate digs / vinyl finds)',
+                'channel_why' => 'Digs oscuros útiles para chops jazz / boom bap.',
+                'channel_url' => 'https://www.youtube.com/@Pell',
+            ],
+            'japanese' => [
+                'genre' => 'City Pop',
+                'style' => 'Funk',
+                'region' => 'Japan',
+                'year' => '1978-1988',
+                'instrument' => 'electric piano',
+                'genre_label' => 'city pop',
+                'region_label' => 'japanese',
+                'era' => '1980s',
+                'hunt_focus' => 'city pop / EP japonesa',
+                'yt_melody' => 'japanese city pop vinyl crackle electric piano',
+                'ref' => 'City pop: EP cálido, chorus suave, no copies el hook entero',
+                'drums_genre' => 'Funk',
+                'drums_style' => 'Disco',
+                'drums_region' => 'Japan',
+                'drums_year' => '1978-1986',
+                'channel_name' => 'Japanese vinyl / city pop digs',
+                'channel_why' => 'Bucles melódicos y drums limpios de era 80s JP.',
+                'channel_url' => 'https://www.youtube.com/results?search_query=japanese+city+pop+vinyl+sample',
+            ],
+            'soul' => [
+                'genre' => 'Soul',
+                'style' => 'Deep Soul',
+                'region' => 'USA',
+                'year' => '1968-1976',
+                'instrument' => 'strings',
+                'genre_label' => 'deep soul',
+                'region_label' => 'american',
+                'era' => '1970s',
+                'hunt_focus' => 'cuerdas / coro soul dusty',
+                'yt_melody' => 'dusty soul vinyl loop minor key strings',
+                'ref' => 'Deep soul: cuerdas o coro, filtro LP, crackle',
+                'drums_genre' => 'Funk',
+                'drums_style' => 'Soul',
+                'drums_region' => 'USA',
+                'drums_year' => '1968-1976',
+                'channel_name' => 'Tracklib (cleared samples)',
+                'channel_why' => 'Soul/funk cleared para leases más seguros.',
+                'channel_url' => 'https://www.youtube.com/@Tracklib',
+            ],
+            'library' => [
+                'genre' => 'Library',
+                'style' => 'Thriller',
+                'region' => 'UK',
+                'year' => '1970-1982',
+                'instrument' => ' Rhodes',
+                'genre_label' => 'library music',
+                'region_label' => 'british',
+                'era' => '1970s',
+                'hunt_focus' => 'library thriller / suspense cue',
+                'yt_melody' => 'library music thriller 1970s vinyl',
+                'ref' => 'Library UK: suspense cues, Rhodes, perc metálica',
+                'drums_genre' => 'Funk',
+                'drums_style' => 'Breaks',
+                'drums_region' => 'UK',
+                'drums_year' => '1970-1980',
+                'channel_name' => 'SuperDuperMusic (library / rare)',
+                'channel_why' => 'Library music y rarezas para chops melódicos.',
+                'channel_url' => 'https://www.youtube.com/results?search_query=library+music+1970s+vinyl',
+            ],
+            'french' => [
+                'genre' => 'Soundtrack',
+                'style' => 'Chanson',
+                'region' => 'France',
+                'year' => '1965-1975',
+                'instrument' => 'accordion / nylon guitar',
+                'genre_label' => 'french soundtrack',
+                'region_label' => 'french',
+                'era' => '1960s',
+                'hunt_focus' => 'soundtrack francés / chanson oscura',
+                'yt_melody' => '1960s french soundtrack minor key vinyl',
+                'ref' => 'Chanson/noir francés: guitarra nylon o accordion filtrado',
+                'drums_genre' => 'Jazz',
+                'drums_style' => 'Swing',
+                'drums_region' => 'France',
+                'drums_year' => '1960-1972',
+                'channel_name' => 'French library / OST digs',
+                'channel_why' => 'OSTs francesas con mood noir para chops.',
+                'channel_url' => 'https://www.youtube.com/results?search_query=french+soundtrack+1960s+vinyl',
+            ],
+        ];
+
+        $key = match (true) {
+            str_contains($blob, 'ital') || str_contains($blob, 'soundtrack') && str_contains($blob, 'piano') => 'italian',
+            str_contains($blob, 'japan') || str_contains($blob, 'city pop') || str_contains($blob, 'anime') => 'japanese',
+            str_contains($blob, 'french') || str_contains($blob, 'francia') || str_contains($blob, 'paris') => 'french',
+            str_contains($blob, 'library') || str_contains($blob, 'thriller') || str_contains($blob, 'suspense') => 'library',
+            str_contains($blob, 'jazz') || str_contains($blob, 'guitar') || str_contains($blob, 'organ') => 'jazz',
+            str_contains($blob, 'soul') || str_contains($blob, 'string') || str_contains($blob, 'choir') || str_contains($blob, 'coro') => 'soul',
+            str_contains($blob, 'piano') => 'italian',
+            default => ['library', 'jazz', 'soul', 'italian', 'french', 'japanese'][$seed % 6],
+        };
+
+        $profile = $profiles[$key];
+        $profile['instrument'] = trim($profile['instrument']);
+
+        return $profile;
+    }
+
+    private function instrumentHint(string $notes, string $mood): string
+    {
+        $blob = strtolower($notes.' '.$mood);
+
+        return match (true) {
+            str_contains($blob, 'guitar') => 'chops de guitarra cortos',
+            str_contains($blob, 'piano') || str_contains($blob, 'rhodes') => 'chops de piano/Rhodes',
+            str_contains($blob, 'string') || str_contains($blob, 'cuerda') => 'stabs de cuerdas filtradas',
+            str_contains($blob, 'organ') => 'organ stabs sucios',
+            str_contains($blob, 'flute') || str_contains($blob, 'flauta') => 'flute phrases cortas',
+            default => 'chops cortos de melodía',
+        };
+    }
+
+    private function titleFromNotes(string $notes, string $fallback): string
+    {
+        $word = preg_split('/[\s,\/]+/u', trim($notes))[0] ?? '';
+        $word = preg_replace('/[^a-zA-ZáéíóúÁÉÍÓÚñÑ]/u', '', $word) ?? '';
+        if ($word === '' || mb_strlen($word) < 3) {
+            return $fallback;
+        }
+
+        return ucfirst(mb_strtolower($word)).' Room';
+    }
+
+    private function seed(string $artists, string $mood, string $notes): int
+    {
+        return abs(crc32(mb_strtolower(trim("{$artists}|{$mood}|{$notes}"))));
+    }
+
+    /**
      * @param  array<string, string>  $filters
      * @return list<array{field: string, value: string}>
      */
@@ -417,5 +670,18 @@ class BriefService
         $parts = preg_split('/\s*[xX×,&\/]\s*/u', $artists) ?: [$artists];
 
         return trim((string) ($parts[0] ?? $artists)) ?: $artists;
+    }
+
+    private function channelNiche(): string
+    {
+        return (string) config('ai.channel.niche');
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function json(array $data): string
+    {
+        return (string) json_encode($data, JSON_UNESCAPED_UNICODE);
     }
 }
